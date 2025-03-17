@@ -1,8 +1,9 @@
-// App.jsx
-import { useState, useRef } from 'react';
+// App.jsx modificado para conectarse con la API
+import { useState, useRef, useEffect } from 'react';
 import './App.css';
 import MapaComponent from './MapaComponent';
-import logoImage from './assets/logo.png'; // Asegúrate de tener una imagen de logo en esta ruta
+import logoImage from './assets/logo.png';
+import ApiService, { TokenManager } from './services/apiService';
 
 function App() {
   // Referencia para el input de imagen
@@ -61,6 +62,35 @@ function App() {
   // Estado para seguimiento del paso actual
   const [pasoActual, setPasoActual] = useState(1);
   const totalPasos = 5;
+
+  // Estado para verificar autenticación
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [userData, setUserData] = useState(null);
+
+  // Verificar autenticación al cargar
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const result = await ApiService.validateToken();
+        if (result.ok) {
+          setIsAuthenticated(true);
+          setUserData(result.data);
+        } else {
+          setIsAuthenticated(false);
+          setUserData(null);
+        }
+      } catch (error) {
+        console.error("Error verificando token:", error);
+        setIsAuthenticated(false);
+        setUserData(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, []);
 
   // Manejar cambios en los campos del formulario
   const handleInputChange = (e) => {
@@ -138,7 +168,7 @@ function App() {
       }
       
       setFormData(nuevosDatos);
-    } else {
+    } else if (name === 'isPublico') {
       setFormData({
         ...formData,
         [name]: value === 'true'
@@ -190,6 +220,14 @@ function App() {
     });
   };
 
+  // Actualizar dirección (desde el componente mapa)
+  const handleDireccion = (nuevaDireccion) => {
+    setFormData({
+      ...formData,
+      direccion: nuevaDireccion
+    });
+  };
+
   // Navegar a otro paso
   const irAPaso = (paso) => {
     if (paso >= 1 && paso <= totalPasos) {
@@ -210,9 +248,17 @@ function App() {
     }
   };
 
-  // Enviar el formulario
-  const handleSubmit = (e) => {
+  // Enviar el formulario a la API
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    if (!isAuthenticated) {
+      setMensaje({
+        texto: 'Debes iniciar sesión para registrar un evento',
+        tipo: 'error'
+      });
+      return;
+    }
     
     // Validación básica
     if (!formData.nombre || !formData.tipo) {
@@ -243,29 +289,99 @@ function App() {
       return;
     }
     
-    // Preparar datos para enviar
-    // En una aplicación real, aquí prepararías los datos para enviar a tu API
-    const eventData = {
-      ...formData,
-      moderado: false,
-      fechaCreacion: new Date().toISOString()
-    };
-    
-    // Simulación de envío
-    console.log('Evento enviado:', eventData);
-    
-    // Mostrar mensaje de éxito
+    // Mostrar mensaje de carga
     setMensaje({
-      texto: 'Evento registrado con éxito. Un administrador lo revisará pronto.',
-      tipo: 'exito'
+      texto: 'Enviando evento, por favor espera...',
+      tipo: 'info'
     });
     
-    // En una aplicación real, aquí enviarías el formulario a tu API
-    // Incluyendo la imagen como FormData si es necesario
+    try {
+      // Enviar a la API
+      const result = await ApiService.createEvent(formData);
+      
+      if (result.ok) {
+        setMensaje({
+          texto: 'Evento registrado con éxito. Un administrador lo revisará pronto.',
+          tipo: 'exito'
+        });
+        
+        // Reiniciar formulario
+        setFormData({
+          nombre: '',
+          tipo: '',
+          tipoFecha: 'unica',
+          fecha: '',
+          fechaFin: '',
+          repeticion: 'semanal',
+          dias: {
+            lunes: false,
+            martes: false,
+            miercoles: false,
+            jueves: false,
+            viernes: false,
+            sabado: false,
+            domingo: false
+          },
+          hora: '',
+          horaFin: '',
+          ubicacion: '',
+          direccion: '',
+          coordenadas: { lat: null, lng: null },
+          descripcion: '',
+          organizador: '',
+          esGratis: false,
+          precio: '',
+          nombreContacto: '',
+          emailContacto: '',
+          telefonoContacto: '',
+          sitioWeb: '',
+          socialMedia: {
+            instagram: '',
+            facebook: '',
+            twitter: ''
+          },
+          isPublico: true,
+          flyerImage: null,
+          flyerPreview: null
+        });
+        
+        // Volver al primer paso
+        setPasoActual(1);
+      } else {
+        setMensaje({
+          texto: `Error: ${result.msg || 'Ocurrió un error al registrar el evento'}`,
+          tipo: 'error'
+        });
+        
+        // Si hay errores específicos, mostrarlos
+        if (result.errores && result.errores.length > 0) {
+          console.error('Errores:', result.errores);
+        }
+      }
+    } catch (error) {
+      console.error("Error al enviar el evento:", error);
+      setMensaje({
+        texto: 'Error de conexión al enviar el evento. Por favor intenta de nuevo.',
+        tipo: 'error'
+      });
+    }
     
     // Scroll al inicio para ver el mensaje
     window.scrollTo(0, 0);
   };
+  
+  // Renderizar login/registro o formulario
+  if (isLoading) {
+    return (
+      <div className="loading-container">
+        <p>Cargando...</p>
+      </div>
+    );
+  }
+  
+  if (!isAuthenticated) {
+    return <LoginComponent setIsAuthenticated={setIsAuthenticated} setUserData={setUserData} />;
+  }
   
   // Renderizar indicadores de progreso
   const renderProgreso = () => {
@@ -576,6 +692,7 @@ function App() {
               direccion={formData.direccion}
               coordenadas={formData.coordenadas}
               setCoordenadas={handleCoordenadas}
+              setDireccion={handleDireccion}
               setMensaje={setMensaje}
             />
           </>
@@ -784,11 +901,25 @@ function App() {
     );
   };
 
+  // Función para cerrar sesión
+  const handleLogout = () => {
+    ApiService.logout();
+    setIsAuthenticated(false);
+    setUserData(null);
+  };
+
   return (
     <div className="container">
       <header className="header">
         <img src={logoImage} alt="Logo de Eventos App" className="logo" />
         <h1>Registro de Eventos</h1>
+        
+        {userData && (
+          <div className="user-info">
+            <span>Bienvenido, {userData.firstname}</span>
+            <button onClick={handleLogout} className="logout-btn">Cerrar sesión</button>
+          </div>
+        )}
       </header>
       
       {/* Mensaje de estado */}
@@ -812,6 +943,166 @@ function App() {
           Todos los eventos deben ser aprobados por un administrador antes de ser publicados.
         </p>
       </form>
+    </div>
+  );
+}
+
+// Componente para login y registro
+function LoginComponent({ setIsAuthenticated, setUserData }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+    firstname: '',
+    lastname: ''
+  });
+  const [mensaje, setMensaje] = useState({ texto: '', tipo: '' });
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({
+      ...formData,
+      [name]: value
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    try {
+      if (isLogin) {
+        // Iniciar sesión
+        const result = await ApiService.login(formData.email, formData.password);
+        
+        if (result.ok) {
+          setIsAuthenticated(true);
+          setUserData(result.data);
+        } else {
+          setMensaje({
+            texto: result.msg || 'Error al iniciar sesión',
+            tipo: 'error'
+          });
+        }
+      } else {
+        // Registrarse
+        const result = await ApiService.register(formData);
+        
+        if (result.ok) {
+          setMensaje({
+            texto: 'Registro exitoso. Verifica tu correo electrónico para activar tu cuenta.',
+            tipo: 'exito'
+          });
+          
+          // Cambiar a la vista de login después del registro exitoso
+          setTimeout(() => {
+            setIsLogin(true);
+          }, 3000);
+        } else {
+          setMensaje({
+            texto: result.msg || 'Error al registrarse',
+            tipo: 'error'
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error en autenticación:", error);
+      setMensaje({
+        texto: 'Error de conexión. Por favor intenta de nuevo.',
+        tipo: 'error'
+      });
+    }
+  };
+
+  return (
+    <div className="container">
+      <header className="header">
+        <img src={logoImage} alt="Logo de Eventos App" className="logo" />
+        <h1>{isLogin ? 'Iniciar Sesión' : 'Registrarse'}</h1>
+      </header>
+      
+      {mensaje.texto && (
+        <div className={`mensaje ${mensaje.tipo}`}>
+          {mensaje.texto}
+        </div>
+      )}
+      
+      <div className="auth-container">
+        <form onSubmit={handleSubmit} className="auth-form">
+          {!isLogin && (
+            <>
+              <div className="campo">
+                <label htmlFor="firstname">Nombre</label>
+                <input
+                  type="text"
+                  id="firstname"
+                  name="firstname"
+                  value={formData.firstname}
+                  onChange={handleChange}
+                  placeholder="Tu nombre"
+                  required
+                />
+              </div>
+              
+              <div className="campo">
+                <label htmlFor="lastname">Apellido</label>
+                <input
+                  type="text"
+                  id="lastname"
+                  name="lastname"
+                  value={formData.lastname}
+                  onChange={handleChange}
+                  placeholder="Tu apellido"
+                  required
+                />
+              </div>
+            </>
+          )}
+          
+          <div className="campo">
+            <label htmlFor="email">Correo Electrónico</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              placeholder="tu@correo.com"
+              required
+            />
+          </div>
+          
+          <div className="campo">
+            <label htmlFor="password">Contraseña</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              placeholder="********"
+              required
+            />
+          </div>
+          
+          <button type="submit" className="auth-button">
+            {isLogin ? 'Iniciar Sesión' : 'Registrarse'}
+          </button>
+        </form>
+        
+        <div className="auth-switch">
+          {isLogin ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
+          <button
+            type="button"
+            className="auth-switch-button"
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setMensaje({ texto: '', tipo: '' });
+            }}
+          >
+            {isLogin ? 'Regístrate' : 'Inicia Sesión'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

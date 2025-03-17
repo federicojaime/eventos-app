@@ -1,4 +1,4 @@
-// MapaComponent.jsx
+// MapaComponent.jsx actualizado
 import { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
@@ -52,15 +52,23 @@ function DraggableMarker({ position, onDragEnd }) {
     );
 }
 
-const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setMensaje }) => {
+const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setDireccion, setMensaje }) => {
     const [map, setMap] = useState(null);
     const [isMapReady, setIsMapReady] = useState(false);
+    const [localDireccion, setLocalDireccion] = useState(direccion || '');
 
     // Coordenadas por defecto (San Luis, Argentina como punto central si no hay coordenadas)
     const defaultPosition = [-33.3022, -66.3376];
     const position = coordenadas?.lat && coordenadas?.lng
         ? [coordenadas.lat, coordenadas.lng]
         : defaultPosition;
+
+    useEffect(() => {
+        // Actualizar dirección local cuando cambia desde el componente padre
+        if (direccion !== localDireccion) {
+            setLocalDireccion(direccion);
+        }
+    }, [direccion]);
 
     // Cuando cambian las coordenadas y el mapa está listo, centrar el mapa en ellas
     useEffect(() => {
@@ -81,6 +89,9 @@ const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setMensaje }) =
             lng: latlng.lng
         });
 
+        // Intentar obtener la dirección desde las coordenadas (geocodificación inversa)
+        buscarDireccionDesdeCoordenadas(latlng.lat, latlng.lng);
+
         setMensaje({
             texto: 'Ubicación actualizada. Puedes arrastrar el marcador para ajustar.',
             tipo: 'exito'
@@ -98,17 +109,46 @@ const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setMensaje }) =
             lat: latlng.lat,
             lng: latlng.lng
         });
+
+        // Intentar obtener la dirección desde las coordenadas (geocodificación inversa)
+        buscarDireccionDesdeCoordenadas(latlng.lat, latlng.lng);
+    };
+
+    // Buscar dirección a partir de coordenadas (geocodificación inversa)
+    const buscarDireccionDesdeCoordenadas = async (lat, lng) => {
+        try {
+            const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+            const data = await response.json();
+
+            if (data && data.display_name) {
+                const nuevaDireccion = data.display_name;
+                setLocalDireccion(nuevaDireccion);
+                if (setDireccion) {
+                    setDireccion(nuevaDireccion);
+                }
+            }
+        } catch (error) {
+            console.error("Error al obtener dirección desde coordenadas:", error);
+        }
     };
 
     // Función para buscar una dirección
     const buscarDireccion = async () => {
+        if (!localDireccion.trim()) {
+            setMensaje({
+                texto: 'Por favor ingresa una dirección para buscar',
+                tipo: 'error'
+            });
+            return;
+        }
+
         try {
             setMensaje({
                 texto: 'Buscando dirección...',
                 tipo: 'info'
             });
 
-            const direccionCodificada = encodeURIComponent(direccion);
+            const direccionCodificada = encodeURIComponent(localDireccion);
             const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${direccionCodificada}&limit=1`);
             const data = await response.json();
 
@@ -152,6 +192,15 @@ const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setMensaje }) =
         }, 5000);
     };
 
+    // Manejar cambios en el campo de dirección
+    const handleDireccionChange = (e) => {
+        const nuevaDireccion = e.target.value;
+        setLocalDireccion(nuevaDireccion);
+        if (setDireccion) {
+            setDireccion(nuevaDireccion);
+        }
+    };
+
     return (
         <div className="mapa-ubicacion">
             <div className="campo">
@@ -161,7 +210,8 @@ const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setMensaje }) =
                         type="text"
                         id="direccion"
                         name="direccion"
-                        value={direccion}
+                        value={localDireccion}
+                        onChange={handleDireccionChange}
                         placeholder="Ej: Pedernera 411, San Luis"
                         required
                     />
