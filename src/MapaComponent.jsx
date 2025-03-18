@@ -1,265 +1,303 @@
-// MapaComponent.jsx actualizado
+// MapaComponent.jsx modernizado
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { MapPin, Search, Navigation } from 'lucide-react';
 
-// Arreglar los íconos de Leaflet
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerIconRetina from 'leaflet/dist/images/marker-icon-2x.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
-// Configurar icono por defecto (necesario para que aparezca el marcador)
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-    iconUrl: markerIcon,
-    iconRetinaUrl: markerIconRetina,
-    shadowUrl: markerShadow,
-});
-
-// Componente para manejar eventos del mapa
-function MapEvents({ onMapClick, onMarkerDrag }) {
-    useMapEvents({
-        click: (e) => {
-            onMapClick(e.latlng);
-        },
-    });
-    return null;
-}
-
-// Componente para manejar draggable marker
-function DraggableMarker({ position, onDragEnd }) {
-    const markerRef = useRef(null);
-
-    // Se ejecuta cuando el marcador termina de ser arrastrado
-    const eventHandlers = {
-        dragend() {
-            const marker = markerRef.current;
-            if (marker != null) {
-                const newPosition = marker.getLatLng();
-                onDragEnd(newPosition);
-            }
-        },
-    };
-
-    return (
-        <Marker
-            draggable={true}
-            eventHandlers={eventHandlers}
-            position={position}
-            ref={markerRef}
-        />
-    );
-}
-
+// Componente de mapa para seleccionar ubicación
 const MapaComponent = ({ direccion, coordenadas, setCoordenadas, setDireccion, setMensaje }) => {
-    const [map, setMap] = useState(null);
-    const [isMapReady, setIsMapReady] = useState(false);
-    const [localDireccion, setLocalDireccion] = useState(direccion || '');
+  const [map, setMap] = useState(null);
+  const [marker, setMarker] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const mapRef = useRef(null);
+  const inputRef = useRef(null);
 
-    // Coordenadas por defecto (San Luis, Argentina como punto central si no hay coordenadas)
-    const defaultPosition = [-33.3022, -66.3376];
-    const position = coordenadas?.lat && coordenadas?.lng
-        ? [coordenadas.lat, coordenadas.lng]
-        : defaultPosition;
-
-    useEffect(() => {
-        // Actualizar dirección local cuando cambia desde el componente padre
-        if (direccion !== localDireccion) {
-            setLocalDireccion(direccion);
-        }
-    }, [direccion]);
-
-    // Cuando cambian las coordenadas y el mapa está listo, centrar el mapa en ellas
-    useEffect(() => {
-        if (map && coordenadas?.lat && coordenadas?.lng) {
-            map.setView([coordenadas.lat, coordenadas.lng], 16);
-        }
-    }, [map, coordenadas]);
-
-    // Cuando el componente se monta, marcar que el mapa está listo
-    useEffect(() => {
-        setIsMapReady(true);
-    }, []);
-
-    // Manejar click en el mapa
-    const handleMapClick = (latlng) => {
-        setCoordenadas({
-            lat: latlng.lat,
-            lng: latlng.lng
+  // Inicializar el mapa cuando el componente se monta
+  useEffect(() => {
+    // Cargar leaflet script dinámicamente
+    const loadLeaflet = async () => {
+      if (!window.L) {
+        // Cargar CSS
+        const linkElement = document.createElement('link');
+        linkElement.rel = 'stylesheet';
+        linkElement.href = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.css';
+        document.head.appendChild(linkElement);
+        
+        // Cargar JS
+        const script = document.createElement('script');
+        script.src = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.js';
+        script.async = true;
+        
+        await new Promise((resolve) => {
+          script.onload = resolve;
+          document.body.appendChild(script);
         });
-
-        // Intentar obtener la dirección desde las coordenadas (geocodificación inversa)
-        buscarDireccionDesdeCoordenadas(latlng.lat, latlng.lng);
-
+      }
+      
+      return window.L;
+    };
+    
+    const initMap = async () => {
+      try {
+        const L = await loadLeaflet();
+        
+        // Crear el mapa
+        const mapInstance = L.map(mapRef.current).setView([-33.4489, -70.6693], 13);
+        
+        // Añadir capa de mapa (OpenStreetMap)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(mapInstance);
+        
+        // Guardar la referencia
+        setMap(mapInstance);
+        
+        // Agregar evento de clic para ubicar el marcador
+        mapInstance.on('click', (e) => {
+          setMarkerPosition(e.latlng, mapInstance);
+          getAddressFromCoordinates(e.latlng.lat, e.latlng.lng);
+        });
+        
+        // Si ya hay coordenadas, mostrar el marcador
+        if (coordenadas && coordenadas.lat && coordenadas.lng) {
+          setMarkerPosition({ lat: coordenadas.lat, lng: coordenadas.lng }, mapInstance);
+          mapInstance.setView([coordenadas.lat, coordenadas.lng], 15);
+        }
+      } catch (error) {
+        console.error("Error al inicializar el mapa:", error);
         setMensaje({
-            texto: 'Ubicación actualizada. Puedes arrastrar el marcador para ajustar.',
-            tipo: 'exito'
+          texto: "Error al cargar el mapa. Por favor, intenta recargar la página.",
+          tipo: "error"
         });
-
-        // Limpiar mensaje después de 3 segundos
-        setTimeout(() => {
-            setMensaje({ texto: '', tipo: '' });
-        }, 3000);
+      }
     };
-
-    // Manejar drag del marcador
-    const handleMarkerDrag = (latlng) => {
-        setCoordenadas({
-            lat: latlng.lat,
-            lng: latlng.lng
+    
+    initMap();
+    
+    // Cleanup
+    return () => {
+      if (map) {
+        map.remove();
+      }
+    };
+  }, []);
+  
+  // Actualizar marcador cuando cambien las coordenadas desde fuera
+  useEffect(() => {
+    if (map && coordenadas && coordenadas.lat && coordenadas.lng) {
+      setMarkerPosition({ lat: coordenadas.lat, lng: coordenadas.lng }, map);
+      map.setView([coordenadas.lat, coordenadas.lng], 15);
+    }
+  }, [coordenadas, map]);
+  
+  // Función para establecer la posición del marcador
+  const setMarkerPosition = (latlng, mapInstance) => {
+    // Remover marcador anterior si existe
+    if (marker) {
+      mapInstance.removeLayer(marker);
+    }
+    
+    // Crear nuevo marcador
+    const L = window.L;
+    const newMarker = L.marker([latlng.lat, latlng.lng], {
+      draggable: true,
+      autoPan: true
+    }).addTo(mapInstance);
+    
+    // Evento al arrastrar el marcador
+    newMarker.on('dragend', (e) => {
+      const pos = e.target.getLatLng();
+      setCoordenadas({ lat: pos.lat, lng: pos.lng });
+      getAddressFromCoordinates(pos.lat, pos.lng);
+    });
+    
+    // Establecer coordenadas
+    setCoordenadas({ lat: latlng.lat, lng: latlng.lng });
+    
+    // Guardar referencia
+    setMarker(newMarker);
+  };
+  
+  // Obtener coordenadas a partir de una dirección
+  const searchLocation = async () => {
+    if (!direccion) {
+      setMensaje({
+        texto: "Por favor ingresa una dirección para buscar",
+        tipo: "error"
+      });
+      return;
+    }
+    
+    setIsLoading(true);
+    
+    try {
+      // Usar Nominatim de OpenStreetMap para geocodificación
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccion)}&limit=1`);
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        const result = data[0];
+        const lat = parseFloat(result.lat);
+        const lng = parseFloat(result.lon);
+        
+        // Actualizar mapa
+        if (map) {
+          setMarkerPosition({ lat, lng }, map);
+          map.setView([lat, lng], 15);
+        }
+        
+        // Actualizar dirección formateada
+        setDireccion(result.display_name);
+        
+        setMensaje({
+          texto: "Ubicación encontrada",
+          tipo: "exito"
         });
-
-        // Intentar obtener la dirección desde las coordenadas (geocodificación inversa)
-        buscarDireccionDesdeCoordenadas(latlng.lat, latlng.lng);
-    };
-
-    // Buscar dirección a partir de coordenadas (geocodificación inversa)
-    const buscarDireccionDesdeCoordenadas = async (lat, lng) => {
-        try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
-            const data = await response.json();
-
-            if (data && data.display_name) {
-                const nuevaDireccion = data.display_name;
-                setLocalDireccion(nuevaDireccion);
-                if (setDireccion) {
-                    setDireccion(nuevaDireccion);
-                }
-            }
-        } catch (error) {
-            console.error("Error al obtener dirección desde coordenadas:", error);
+      } else {
+        setMensaje({
+          texto: "No se pudo encontrar la dirección. Intenta con otra o marca en el mapa.",
+          tipo: "error"
+        });
+      }
+    } catch (error) {
+      console.error("Error al buscar dirección:", error);
+      setMensaje({
+        texto: "Error al buscar dirección. Verifica tu conexión a internet.",
+        tipo: "error"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Obtener dirección a partir de coordenadas (geocodificación inversa)
+  const getAddressFromCoordinates = async (lat, lng) => {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+      const data = await response.json();
+      
+      if (data && data.display_name) {
+        setDireccion(data.display_name);
+      }
+    } catch (error) {
+      console.error("Error en geocodificación inversa:", error);
+    }
+  };
+  
+  // Usar la ubicación actual del usuario
+  const useCurrentLocation = () => {
+    if (navigator.geolocation) {
+      setIsLoading(true);
+      
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          // Actualizar mapa
+          if (map) {
+            setMarkerPosition({ lat, lng }, map);
+            map.setView([lat, lng], 15);
+          }
+          
+          // Obtener dirección
+          getAddressFromCoordinates(lat, lng);
+          
+          setIsLoading(false);
+          
+          setMensaje({
+            texto: "Usando tu ubicación actual",
+            tipo: "info"
+          });
+        },
+        (error) => {
+          setIsLoading(false);
+          
+          let errorMsg = "Error al obtener tu ubicación";
+          
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMsg = "Permiso de ubicación denegado. Habilita la ubicación en tu navegador.";
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMsg = "Información de ubicación no disponible.";
+              break;
+            case error.TIMEOUT:
+              errorMsg = "Tiempo de espera agotado para obtener la ubicación.";
+              break;
+            default:
+              errorMsg = "Error desconocido al obtener ubicación.";
+          }
+          
+          setMensaje({
+            texto: errorMsg,
+            tipo: "error"
+          });
         }
-    };
-
-    // Función para buscar una dirección
-    const buscarDireccion = async () => {
-        if (!localDireccion.trim()) {
-            setMensaje({
-                texto: 'Por favor ingresa una dirección para buscar',
-                tipo: 'error'
-            });
-            return;
-        }
-
-        try {
-            setMensaje({
-                texto: 'Buscando dirección...',
-                tipo: 'info'
-            });
-
-            const direccionCodificada = encodeURIComponent(localDireccion);
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${direccionCodificada}&limit=1`);
-            const data = await response.json();
-
-            if (data.length > 0) {
-                const resultado = data[0];
-                const nuevasCoordenadas = {
-                    lat: parseFloat(resultado.lat),
-                    lng: parseFloat(resultado.lon)
-                };
-
-                setCoordenadas(nuevasCoordenadas);
-
-                // Si el mapa está disponible, centrarlo en las nuevas coordenadas
-                if (map) {
-                    map.setView([nuevasCoordenadas.lat, nuevasCoordenadas.lng], 16);
-                }
-
-                setMensaje({
-                    texto: 'Ubicación encontrada. Puedes arrastrar el marcador para ajustar.',
-                    tipo: 'exito'
-                });
-            } else {
-                setMensaje({
-                    texto: 'No se encontró la dirección. Intenta ser más específico.',
-                    tipo: 'error'
-                });
-            }
-        } catch (error) {
-            console.error("Error al buscar dirección:", error);
-            setMensaje({
-                texto: 'Error al buscar la dirección. Verifica tu conexión a internet.',
-                tipo: 'error'
-            });
-        }
-
-        // Limpiar mensaje de error después de 5 segundos (los éxitos ya se limpian en el propio servicio)
-        setTimeout(() => {
-            setMensaje((prevMensaje) =>
-                prevMensaje.tipo === 'error' ? { texto: '', tipo: '' } : prevMensaje
-            );
-        }, 5000);
-    };
-
-    // Manejar cambios en el campo de dirección
-    const handleDireccionChange = (e) => {
-        const nuevaDireccion = e.target.value;
-        setLocalDireccion(nuevaDireccion);
-        if (setDireccion) {
-            setDireccion(nuevaDireccion);
-        }
-    };
-
-    return (
-        <div className="mapa-ubicacion">
-            <div className="campo">
-                <label htmlFor="direccion">Dirección *</label>
-                <div className="input-con-boton">
-                    <input
-                        type="text"
-                        id="direccion"
-                        name="direccion"
-                        value={localDireccion}
-                        onChange={handleDireccionChange}
-                        placeholder="Ej: Pedernera 411, San Luis"
-                        required
-                    />
-                    <button
-                        type="button"
-                        className="btn-buscar"
-                        onClick={buscarDireccion}
-                    >
-                        Buscar
-                    </button>
-                </div>
-                <p className="help-text">
-                    Busca la dirección o haz clic en el mapa para seleccionar la ubicación. Puedes arrastrar el marcador para ajustar.
-                </p>
-            </div>
-
-            <div className="mapa-container">
-                {isMapReady && (
-                    <MapContainer
-                        center={position}
-                        zoom={15}
-                        style={{ height: "400px", width: "100%", borderRadius: "8px" }}
-                        whenCreated={setMap}
-                    >
-                        <TileLayer
-                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                        />
-
-                        {coordenadas?.lat && coordenadas?.lng && (
-                            <DraggableMarker
-                                position={[coordenadas.lat, coordenadas.lng]}
-                                onDragEnd={handleMarkerDrag}
-                            />
-                        )}
-
-                        <MapEvents onMapClick={handleMapClick} />
-                    </MapContainer>
-                )}
-            </div>
-
-            {coordenadas?.lat && coordenadas?.lng && (
-                <div className="coordenadas-display">
-                    Lat: {coordenadas.lat.toFixed(6)}, Lng: {coordenadas.lng.toFixed(6)}
-                </div>
-            )}
+      );
+    } else {
+      setMensaje({
+        texto: "Geolocalización no soportada por tu navegador",
+        tipo: "error"
+      });
+    }
+  };
+  
+  // Presionar enter para buscar
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      searchLocation();
+    }
+  };
+  
+  return (
+    <div className="mapa-ubicacion">
+      <div className="campo campo-con-icono">
+        <MapPin className="campo-icono" size={18} />
+        <label htmlFor="direccion">Dirección</label>
+        <div className="input-con-boton">
+          <input
+            type="text"
+            id="direccion"
+            name="direccion"
+            value={direccion || ''}
+            onChange={(e) => setDireccion(e.target.value)}
+            placeholder="Ingresa una dirección para buscar"
+            onKeyPress={handleKeyPress}
+            ref={inputRef}
+          />
+          <button 
+            type="button" 
+            className="btn-buscar"
+            onClick={searchLocation}
+            disabled={isLoading}
+          >
+            {isLoading ? <div className="mini-spinner"></div> : <Search size={18} />}
+          </button>
         </div>
-    );
+      </div>
+      
+      <div className="mapa-opciones">
+        <button 
+          type="button" 
+          className="mapa-btn-ubicacion"
+          onClick={useCurrentLocation}
+          disabled={isLoading}
+        >
+          <Navigation size={16} /> Usar mi ubicación
+        </button>
+      </div>
+      
+      <div className="mapa-container">
+        <div ref={mapRef} style={{ height: '300px', width: '100%' }}></div>
+      </div>
+      
+      {coordenadas && coordenadas.lat && coordenadas.lng && (
+        <div className="coordenadas-display">
+          {coordenadas.lat.toFixed(6)}, {coordenadas.lng.toFixed(6)}
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default MapaComponent;
